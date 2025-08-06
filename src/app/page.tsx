@@ -1,103 +1,244 @@
-import Image from "next/image";
+'use client';
+
+import { useState, useEffect, useRef } from 'react';
+
+interface StreamMessage {
+  type: 'connected' | 'content' | 'end' | 'error' | 'status';
+  data?: string;
+  taskId?: string;
+  timestamp: number;
+}
 
 export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [prompt, setPrompt] = useState('');
+  const [taskId, setTaskId] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [content, setContent] = useState('');
+  const [status, setStatus] = useState<string>('');
+  const [error, setError] = useState<string>('');
+  const eventSourceRef = useRef<EventSource | null>(null);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  // 启动长任务
+  const startTask = async () => {
+    if (!prompt.trim()) {
+      alert('请输入提示词');
+      return;
+    }
+
+    setIsLoading(true);
+    setContent('');
+    setError('');
+    setStatus('正在启动任务...');
+
+    try {
+      const response = await fetch('/api/tasks/start', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          prompt,
+          model: 'gpt-3.5-turbo',
+          maxTokens: 1000,
+          temperature: 0.7,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        setTaskId(result.taskId);
+        setStatus('任务已排队，开始监听流数据...');
+        startListening(result.taskId);
+      } else {
+        setError(result.error || '启动任务失败');
+        setIsLoading(false);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '网络错误');
+      setIsLoading(false);
+    }
+  };
+
+  // 开始监听 SSE 流
+  const startListening = (taskId: string) => {
+    // 关闭之前的连接
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+    }
+
+    const eventSource = new EventSource(`/api/tasks/stream?taskId=${taskId}`);
+    eventSourceRef.current = eventSource;
+
+    eventSource.onmessage = (event) => {
+      try {
+        const message: StreamMessage = JSON.parse(event.data);
+        
+        switch (message.type) {
+          case 'connected':
+            setStatus('已连接，等待数据...');
+            break;
+            
+          case 'content':
+            setContent(prev => prev + (message.data || ''));
+            setStatus('正在接收数据...');
+            break;
+            
+          case 'end':
+            setStatus('任务完成！');
+            setIsLoading(false);
+            break;
+            
+          case 'error':
+            setError(message.data || '未知错误');
+            setStatus('任务失败');
+            setIsLoading(false);
+            break;
+            
+          case 'status':
+            setStatus(`任务状态: ${message.data}`);
+            if (message.data === 'completed' || message.data === 'failed') {
+              setIsLoading(false);
+            }
+            break;
+        }
+      } catch (err) {
+        console.error('解析 SSE 消息失败:', err);
+      }
+    };
+
+    eventSource.onerror = (event) => {
+      console.error('SSE 连接错误:', event);
+      setError('连接中断');
+      setIsLoading(false);
+      eventSource.close();
+    };
+  };
+
+  // 停止监听
+  const stopListening = () => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+    setIsLoading(false);
+    setStatus('已停止监听');
+  };
+
+  // 清理
+  useEffect(() => {
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+      }
+    };
+  }, []);
+
+  return (
+    <div className="min-h-screen bg-gray-50 py-8">
+      <div className="max-w-4xl mx-auto px-4">
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <h1 className="text-3xl font-bold text-gray-900 mb-8">
+            QStash 长任务处理系统
+          </h1>
+          
+          <div className="space-y-6">
+            {/* 输入区域 */}
+            <div>
+              <label htmlFor="prompt" className="block text-sm font-medium text-gray-700 mb-2">
+                请输入您的提示词：
+              </label>
+              <textarea
+                id="prompt"
+                value={prompt}
+                onChange={(e) => {
+                  console.log('*********', e)
+                  setPrompt(e.target.value)
+                }}
+                placeholder="例如：写一个关于人工智能的短故事..."
+                className="w-full h-32 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                disabled={isLoading}
+              />
+            </div>
+
+            {/* 控制按钮 */}
+            <div className="flex space-x-4">
+              <p>{prompt.trim()}</p>
+              <button
+                onClick={startTask}
+                disabled={isLoading || !prompt.trim()}
+                className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+              >
+                {isLoading ? '处理中...' : '开始任务'}
+              </button>
+              
+              {isLoading && (
+                <button
+                  onClick={stopListening}
+                  className="px-6 py-2 bg-red-600 text-white rounded-md hover:bg-red-700"
+                >
+                  停止监听
+                </button>
+              )}
+            </div>
+
+            {/* 状态显示 */}
+            {status && (
+              <div className="p-4 bg-blue-50 border border-blue-200 rounded-md">
+                <p className="text-sm text-blue-800">
+                  <strong>状态:</strong> {status}
+                </p>
+                {taskId && (
+                  <p className="text-sm text-blue-600 mt-1">
+                    <strong>任务ID:</strong> {taskId}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* 错误显示 */}
+            {error && (
+              <div className="p-4 bg-red-50 border border-red-200 rounded-md">
+                <p className="text-sm text-red-800">
+                  <strong>错误:</strong> {error}
+                </p>
+              </div>
+            )}
+
+            {/* 结果显示 */}
+            {content && (
+              <div className="space-y-2">
+                <h3 className="text-lg font-semibold text-gray-900">生成结果：</h3>
+                <div className="p-4 bg-gray-50 border border-gray-200 rounded-md">
+                  <pre className="whitespace-pre-wrap text-sm text-gray-800 font-mono">
+                    {content}
+                  </pre>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+
+        {/* 使用说明 */}
+        <div className="mt-8 bg-white rounded-lg shadow-md p-6">
+          <h2 className="text-xl font-semibold text-gray-900 mb-4">使用说明</h2>
+          <div className="prose text-gray-600">
+            <ol className="list-decimal list-inside space-y-2">
+              <li>在文本框中输入您想要 AI 处理的提示词</li>
+              <li>点击&ldquo;开始任务&rdquo;按钮，系统会将任务发送到 QStash 队列</li>
+              <li>任务将在后台执行，调用 OpenAI API 生成流式响应</li>
+              <li>生成的内容会实时通过 SSE 推送到浏览器并显示</li>
+              <li>任务完成后会显示完整的生成结果</li>
+            </ol>
+            
+            <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-md">
+              <p className="text-sm text-yellow-800">
+                <strong>注意:</strong> 请确保已正确配置所有环境变量（QStash Token、Redis 配置、OpenAI API Key 等）
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
