@@ -18,6 +18,28 @@ export default function Home() {
   const [error, setError] = useState<string>('');
   const eventSourceRef = useRef<EventSource | null>(null);
 
+  // 保存 taskId 到 localStorage
+  const saveTaskId = (id: string) => {
+    localStorage.setItem('currentTaskId', id);
+    setTaskId(id);
+  };
+
+  // 从 localStorage 获取 taskId
+  const getStoredTaskId = (): string | null => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('currentTaskId');
+    }
+    return null;
+  };
+
+  // 清除 localStorage 中的 taskId
+  const clearStoredTaskId = () => {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('currentTaskId');
+    }
+    setTaskId(null);
+  };
+
   // 启动长任务
   const startTask = async () => {
     if (!prompt.trim()) {
@@ -47,7 +69,7 @@ export default function Home() {
       const result = await response.json();
 
       if (result.success) {
-        setTaskId(result.taskId);
+        saveTaskId(result.taskId);
         setStatus('任务已排队，开始监听流数据...');
         startListening(result.taskId);
       } else {
@@ -87,18 +109,21 @@ export default function Home() {
           case 'end':
             setStatus('任务完成！');
             setIsLoading(false);
+            clearStoredTaskId();
             break;
             
           case 'error':
             setError(message.data || '未知错误');
             setStatus('任务失败');
             setIsLoading(false);
+            clearStoredTaskId();
             break;
             
           case 'status':
             setStatus(`任务状态: ${message.data}`);
             if (message.data === 'completed' || message.data === 'failed') {
               setIsLoading(false);
+              clearStoredTaskId();
             }
             break;
         }
@@ -124,6 +149,17 @@ export default function Home() {
     setIsLoading(false);
     setStatus('已停止监听');
   };
+
+  // 页面加载时恢复 taskId 并重新连接
+  useEffect(() => {
+    const storedTaskId = getStoredTaskId();
+    if (storedTaskId) {
+      setTaskId(storedTaskId);
+      setStatus('检测到未完成任务，正在重新连接...');
+      setIsLoading(true);
+      startListening(storedTaskId);
+    }
+  }, []);
 
   // 清理
   useEffect(() => {
