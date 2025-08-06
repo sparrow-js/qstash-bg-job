@@ -11,6 +11,7 @@ export const config = {
   },
   openai: {
     apiKey: process.env.OPENAI_API_KEY || '',
+    baseURL: process.env.OPENAI_BASE_URL || '',
   },
   app: {
     baseUrl: process.env.NEXT_PUBLIC_BASE_URL || 'https://1r8vx4g7-3000.inc1.devtunnels.ms/',

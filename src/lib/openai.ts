@@ -13,6 +13,7 @@ function getOpenAIClient(): OpenAI {
     }
     openai = new OpenAI({
       apiKey: config.openai.apiKey,
+      baseURL: config.openai.baseURL,
     });
   }
   return openai;
@@ -30,7 +31,7 @@ export interface StreamTaskOptions {
 export async function executeOpenAIStreamTask({
   taskId,
   prompt,
-  model = 'gpt-3.5-turbo',
+  model = 'openai/gpt-3.5-turbo',
   maxTokens = 1000,
   temperature = 0.7,
 }: StreamTaskOptions) {
