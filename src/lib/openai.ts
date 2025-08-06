@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { config } from '@/config/env';
-import { setTaskStatus, setTaskError, TaskStatus } from './redis';
+import { setTaskStatus, setTaskError, TaskStatus, addStreamData } from './redis';
 import { redisPubSub } from './redis-pubsub';
 
 // OpenAI 客户端实例（延迟初始化）
@@ -63,6 +63,9 @@ export async function executeOpenAIStreamTask({
       
       if (content) {
         fullContent += content;
+        
+        // 将内容片段追加到 Redis 存储
+        await addStreamData(taskId, content);
         
         // 通过 Redis pub/sub 推送内容片段
         await redisPubSub.publishContent(taskId, content);
